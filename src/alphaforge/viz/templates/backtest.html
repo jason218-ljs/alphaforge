@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaForge 回测明细</title>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  </style>
+</head>
+<body class="text-gray-100 p-6">
+  <div class="max-w-7xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">回测明细</h1>
+      <div class="flex gap-3">
+        <a href="/" class="bg-cyan-600 hover:bg-cyan-500 px-4 py-2 rounded-lg text-sm">仪表盘</a>
+        <a href="/attribution" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm">归因分析</a>
+      </div>
+    </div>
+
+    <!-- 绩效汇总卡片 -->
+    <div id="summary-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+
+    <!-- 配置快照 -->
+    <div class="card p-4 mb-6">
+      <h3 class="font-semibold mb-2">撮合规则快照（可审计）</h3>
+      <div id="config-snapshot" class="text-sm grid grid-cols-2 md:grid-cols-3 gap-2"></div>
+    </div>
+
+    <!-- 成交记录表 -->
+    <div class="card p-4">
+      <h3 class="font-semibold mb-3">成交记录</h3>
+      <div id="trade-table" class="overflow-x-auto"></div>
+    </div>
+
+    <p class="text-gray-500 text-xs text-center mt-8">AlphaForge 自动生成 · 仅供复盘参考</p>
+  </div>
+
+  <script>
+    function renderSummary(summary) {
+      const cards = [
+        { label: '累计收益', value: (summary.total_return*100).toFixed(2) + '%', color: summary.total_return>=0?'#34d399':'#f87171' },
+        { label: '年化收益', value: (summary.annualized_return*100).toFixed(2) + '%', color: summary.annualized_return>=0?'#34d399':'#f87171' },
+        { label: '最大回撤', value: (summary.max_drawdown*100).toFixed(2) + '%', color: '#f87171' },
+        { label: '夏普比率', value: summary.sharpe_ratio.toFixed(2), color: '#60a5fa' },
+        { label: '成交数', value: summary.total_trades + ' 笔', color: '#fbbf24' },
+        { label: '胜率', value: (summary.win_rate*100).toFixed(1) + '%', color: '#a78bfa' },
+        { label: '期末净值', value: '¥' + (summary.final_nav/10000).toFixed(1) + '万', color: '#22d3ee' },
+        { label: '交易天数', value: summary.days + ' 天', color: '#94a3b8' },
+      ];
+      document.getElementById('summary-cards').innerHTML = cards.map(c => `
+        <div class="card p-4"><div class="text-gray-400 text-xs">${c.label}</div>
+        <div class="text-xl font-bold mt-1" style="color:${c.color}">${c.value}</div></div>`).join('');
+    }
+
+    function renderConfig(cfg) {
+      const box = document.getElementById('config-snapshot');
+      if (!cfg || Object.keys(cfg).length === 0) { box.innerHTML = '<div class="text-gray-400">暂无配置快照</div>'; return; }
+      box.innerHTML = Object.entries(cfg).map(([k,v]) => {
+        if (typeof v === 'object') v = JSON.stringify(v);
+        return `<div class="p-2 rounded-lg bg-slate-800 flex justify-between"><span class="text-gray-400">${k}</span><span>${v}</span></div>`;
+      }).join('');
+    }
+
+    function renderTrades(trades) {
+      const box = document.getElementById('trade-table');
+      if (!trades || trades.length === 0) { box.innerHTML = '<div class="text-gray-400 text-sm">暂无成交记录</div>'; return; }
+      const rows = trades.map(t => {
+        const filled = t.status === 'FILLED';
+        const color = filled ? (t.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400') : 'text-slate-500';
+        return `<tr class="border-t border-slate-700 text-sm">
+          <td class="p-2">${String(t.date).slice(0,10)}</td>
+          <td class="p-2 ${color} font-semibold">${t.side}</td>
+          <td class="p-2">${t.code}</td>
+          <td class="p-2 text-right">${t.requested_qty}</td>
+          <td class="p-2 text-right">${t.filled_qty}</td>
+          <td class="p-2 text-right">${t.price.toFixed(2)}</td>
+          <td class="p-2 text-right">${t.fee.toFixed(2)}</td>
+          <td class="p-2">${t.status}</td>
+          <td class="p-2 text-xs text-gray-400">${t.reject_reason || t.reason || ''}</td>
+        </tr>`;
+      }).join('');
+      box.innerHTML = `<table class="w-full text-sm">
+        <thead><tr class="text-gray-400">
+          <th class="p-2 text-left">日期</th><th class="p-2 text-left">方向</th><th class="p-2 text-left">代码</th>
+          <th class="p-2 text-right">申报量</th><th class="p-2 text-right">成交量</th><th class="p-2 text-right">价格</th>
+          <th class="p-2 text-right">费用</th><th class="p-2 text-left">状态</th><th class="p-2 text-left">备注</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    async function loadBacktest() {
+      try {
+        const resp = await fetch('/api/backtest');
+        const data = await resp.json();
+        if (data.error) { document.getElementById('trade-table').innerHTML = data.error; return; }
+        renderSummary(data.summary);
+        renderConfig(data.config_snapshot);
+        renderTrades(data.trade_log);
+      } catch (e) { document.getElementById('trade-table').innerHTML = '加载失败：' + e.message; }
+    }
+    loadBacktest();
+  </script>
+</body>
+</html>

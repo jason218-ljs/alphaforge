@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaForge 归因分析</title>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  </style>
+</head>
+<body class="text-gray-100 p-6">
+  <div class="max-w-7xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold">归因分析</h1>
+        <p class="text-gray-400 text-sm mt-1">Brinson 行业归因 + Fama-French 因子归因</p>
+      </div>
+      <a href="/" class="bg-cyan-600 hover:bg-cyan-500 px-4 py-2 rounded-lg text-sm">返回仪表盘</a>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <!-- Brinson 瀑布 -->
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">Brinson 行业归因瀑布图</h3>
+        <div id="brinson-waterfall" style="height:380px"></div>
+      </div>
+      <!-- Fama 饼图 -->
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">Fama-French 收益分解</h3>
+        <div id="fama-pie" style="height:380px"></div>
+      </div>
+    </div>
+
+    <!-- 行业明细表 -->
+    <div class="card p-4">
+      <h3 class="font-semibold mb-3">行业归因明细</h3>
+      <div id="industry-table" class="overflow-x-auto"></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">Fama 回归参数</h3>
+        <div id="fama-regression" class="text-sm space-y-2"></div>
+      </div>
+    </div>
+
+    <p class="text-gray-500 text-xs text-center mt-8">AlphaForge 自动生成 · 仅供复盘参考</p>
+  </div>
+
+  <script>
+    function initWaterfall(rows) {
+      if (!rows || rows.length === 0) { document.getElementById('brinson-waterfall').innerHTML = '<div class="text-gray-400 text-sm">暂无 Brinson 数据</div>'; return; }
+      const chart = echarts.init(document.getElementById('brinson-waterfall'), 'dark');
+      const labels = rows.map(r => r.label);
+      const cumulative = rows.map(r => +r.cumulative.toFixed(2));
+      const values = rows.map(r => +r.value.toFixed(2));
+      // 瀑布图：基准项与总额显示累计，中间项显示增量
+      const seriesData = rows.map((r, i) => {
+        if (r.type === 'base') return { value: 0, itemStyle: { color: '#94a3b8' } };
+        if (r.type === 'total') return { value: r.value, itemStyle: { color: r.value >= 0 ? '#34d399' : '#f87171' } };
+        const base = i === 0 ? 0 : cumulative[i-1];
+        return { value: r.value, itemStyle: { color: r.value >= 0 ? '#22d3ee' : '#fbbf24' } };
+      });
+      chart.setOption({
+        tooltip: { trigger: 'item', formatter: p => p.name + ': ' + p.value.toFixed(2) + '%' },
+        grid: { left: 60, right: 20, top: 30, bottom: 40 },
+        xAxis: { type: 'category', data: labels, splitLine: { show: false } },
+        yAxis: { type: 'value', axisLabel: { formatter: v => v + '%' }, splitLine: { lineStyle: { color: '#1e293b' } } },
+        series: [{ type: 'bar', data: seriesData, barWidth: 45,
+          label: { show: true, position: 'top', formatter: p => p.data.value.toFixed(2) + '%' } }]
+      });
+    }
+
+    function initFamaPie(items) {
+      if (!items || items.length === 0) { document.getElementById('fama-pie').innerHTML = '<div class="text-gray-400 text-sm">暂无 Fama 数据</div>'; return; }
+      const chart = echarts.init(document.getElementById('fama-pie'), 'dark');
+      const colors = ['#22d3ee', '#34d399', '#a78bfa', '#fbbf24'];
+      chart.setOption({
+        tooltip: { trigger: 'item', formatter: '{b}: {c}% ({d}%)' },
+        legend: { bottom: 0 },
+        series: [{
+          type: 'pie', radius: ['35%', '68%'],
+          label: { show: true, formatter: '{b}\n{c}%' },
+          data: items.map((it, i) => ({ name: it.name, value: it.value, itemStyle: { color: colors[i % colors.length] } }))
+        }]
+      });
+    }
+
+    function renderIndustryTable(detail) {
+      const box = document.getElementById('industry-table');
+      if (!detail || detail.length === 0) { box.innerHTML = '<div class="text-gray-400 text-sm">暂无行业明细</div>'; return; }
+      const rows = detail.map(d => `
+        <tr class="border-t border-slate-700">
+          <td class="p-2">${d.industry}</td>
+          <td class="p-2 text-right">${(d.portfolio_weight*100).toFixed(1)}%</td>
+          <td class="p-2 text-right">${(d.benchmark_weight*100).toFixed(1)}%</td>
+          <td class="p-2 text-right" style="color:${d.allocation_effect>=0?'#34d399':'#f87171'}">${(d.allocation_effect*100).toFixed(2)}%</td>
+          <td class="p-2 text-right" style="color:${d.selection_effect>=0?'#34d399':'#f87171'}">${(d.selection_effect*100).toFixed(2)}%</td>
+        </tr>`).join('');
+      box.innerHTML = `<table class="w-full text-sm">
+        <thead><tr class="text-gray-400">
+          <th class="p-2 text-left">行业</th><th class="p-2 text-right">组合权重</th>
+          <th class="p-2 text-right">基准权重</th><th class="p-2 text-right">配置效应</th><th class="p-2 text-right">选股效应</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderRegression(reg) {
+      const box = document.getElementById('fama-regression');
+      if (!reg || Object.keys(reg).length === 0) { box.innerHTML = '<div class="text-gray-400">暂无回归数据</div>'; return; }
+      const items = [
+        ['Alpha', (reg.alpha*100).toFixed(2) + '%'],
+        ['市场 Beta', reg.beta_market.toFixed(2)],
+        ['规模 Beta (SMB)', reg.beta_smb.toFixed(2)],
+        ['价值 Beta (HML)', reg.beta_hml.toFixed(2)],
+        ['R²', reg.r_squared.toFixed(3)],
+        ['样本数', reg.n_observations],
+      ];
+      box.innerHTML = items.map(([k,v]) => `
+        <div class="flex justify-between p-2 rounded-lg bg-slate-800">
+          <span class="text-gray-300">${k}</span><span class="font-semibold">${v}</span>
+        </div>`).join('');
+    }
+
+    async function loadAttribution() {
+      try {
+        const resp = await fetch('/api/attribution');
+        const data = await resp.json();
+        if (data.error) { document.getElementById('brinson-waterfall').innerHTML = data.error; return; }
+        initWaterfall(data.brinson_waterfall);
+        initFamaPie(data.fama_pie);
+        renderIndustryTable(data.brinson_detail);
+        renderRegression(data.fama_regression);
+      } catch (e) { document.getElementById('brinson-waterfall').innerHTML = '加载失败：' + e.message; }
+    }
+
+    loadAttribution();
+    window.addEventListener('resize', () => {
+      document.getElementById('brinson-waterfall').innerHTML = '';
+      document.getElementById('fama-pie').innerHTML = '';
+      loadAttribution();
+    });
+  </script>
+</body>
+</html>

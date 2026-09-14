@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 测试与类型检查
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 运行时数据（不入库）
+data/
+output/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 临时调试
+_debug_*.py
+*.log
+# ---- 公开发布版附加忽略（数据与产物不入库）----
+data/
+output/
+logs/
+*.db
+*.sqlite
+*.xlsx
+.pytest_cache/
+.coverage
+htmlcov/

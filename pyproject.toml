@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphaforge"
+version = "1.0.0"
+description = "企业级量化分析回测引擎（AlphaForge）"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+keywords = ["quant", "backtest", "analytics", "attribution", "portfolio"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "requests>=2.31",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+advanced = [
+    "optuna>=3.5",         # 贝叶斯参数寻优
+    "matplotlib>=3.7",     # 权益曲线可视化
+    "loguru>=0.7",         # 结构化日志
+]
+viz = [
+    "flask>=3.0",          # 可视化仪表盘服务器
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "mypy>=1.8",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+alphaforge = "alphaforge.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--cov=alphaforge --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["alphaforge"]
+omit = ["src/alphaforge/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+mypy_path = "src"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["SIM105"]

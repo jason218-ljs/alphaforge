@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaForge 选股打分策略回测</title>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  </style>
+</head>
+<body class="text-gray-100 p-6">
+  <div class="max-w-7xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold">选股打分策略回测</h1>
+        <p id="period" class="text-gray-400 text-sm mt-1">加载中...</p>
+      </div>
+      <div class="flex gap-3">
+        <a href="/" class="bg-cyan-600 hover:bg-cyan-500 px-4 py-2 rounded-lg text-sm">主仪表盘</a>
+        <a href="/attribution" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm">归因分析</a>
+      </div>
+    </div>
+
+    <!-- KPI -->
+    <div id="kpi-grid" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 mb-6"></div>
+
+    <!-- 权益曲线 + 回撤 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="card p-4 lg:col-span-2">
+        <h3 class="font-semibold mb-2">组合净值曲线（归一化 1000）</h3>
+        <div id="equity-chart" style="height:340px"></div>
+      </div>
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">回撤水下</h3>
+        <div id="drawdown-chart" style="height:340px"></div>
+      </div>
+    </div>
+
+    <!-- 交易记录 -->
+    <div class="card p-4 mb-6">
+      <h3 class="font-semibold mb-3">交易记录</h3>
+      <div id="trade-table" class="overflow-x-auto"></div>
+    </div>
+
+    <!-- 候选池 -->
+    <div class="card p-4">
+      <h3 class="font-semibold mb-3">候选池</h3>
+      <div id="pool-table" class="overflow-x-auto"></div>
+    </div>
+
+    <p class="text-gray-500 text-xs text-center mt-8">AlphaForge 选股打分策略 · 基于 stock-scoring_auto_workflow.md</p>
+  </div>
+
+  <script>
+    function fmtPct(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+    function colorOf(v) { return v >= 0 ? '#34d399' : '#f87171'; }
+
+    function renderKPI(kpi, bench) {
+      const cards = [
+        { label: '总收益', value: fmtPct(kpi.total_return), color: colorOf(kpi.total_return) },
+        { label: '年化收益', value: fmtPct(kpi.annualized), color: colorOf(kpi.annualized) },
+        { label: '最大回撤', value: fmtPct(kpi.max_drawdown), color: colorOf(kpi.max_drawdown) },
+        { label: '夏普比率', value: kpi.sharpe.toFixed(2), color: kpi.sharpe >= 1 ? '#34d399' : (kpi.sharpe >= 0 ? '#fbbf24' : '#f87171') },
+        { label: '胜率', value: kpi.win_rate.toFixed(1) + '%', color: '#60a5fa' },
+        { label: '盈亏比', value: kpi.profit_loss_ratio.toFixed(2), color: '#a78bfa' },
+        { label: '成交笔数', value: kpi.total_trades + ' 笔', color: '#fbbf24' },
+        { label: '超额(vs沪深300)', value: fmtPct((bench.excess_return||0)*100), color: colorOf((bench.excess_return||0)*100) },
+      ];
+      document.getElementById('kpi-grid').innerHTML = cards.map(c => `
+        <div class="card p-3"><div class="text-gray-400 text-xs">${c.label}</div>
+        <div class="text-xl font-bold mt-1" style="color:${c.color}">${c.value}</div></div>`).join('');
+    }
+
+    function initEquity(eq) {
+      const chart = echarts.init(document.getElementById('equity-chart'), 'dark');
+      chart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 55, right: 20, top: 20, bottom: 40 },
+        xAxis: { type: 'category', data: eq.dates, axisLine: { lineStyle: { color: '#475569' } } },
+        yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } } },
+        series: [{ name: '净值', type: 'line', data: eq.nav, smooth: true, symbol: 'none',
+          lineStyle: { width: 3, color: '#22d3ee' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(34,211,238,0.3)'},{offset:1,color:'rgba(34,211,238,0)'}]) } }]
+      });
+    }
+
+    function initDrawdown(dd) {
+      const chart = echarts.init(document.getElementById('drawdown-chart'), 'dark');
+      chart.setOption({
+        tooltip: { trigger: 'axis', valueFormatter: v => v.toFixed(2) + '%' },
+        grid: { left: 50, right: 20, top: 20, bottom: 40 },
+        xAxis: { type: 'category', data: dd.dates, axisLine: { lineStyle: { color: '#475569' } } },
+        yAxis: { type: 'value', axisLabel: { formatter: v => v + '%' }, splitLine: { lineStyle: { color: '#1e293b' } } },
+        series: [{ type: 'line', data: dd.values, smooth: true, symbol: 'none',
+          lineStyle: { color: '#f87171' }, areaStyle: { color: 'rgba(248,113,113,0.4)' } }]
+      });
+    }
+
+    function renderTrades(trades) {
+      const box = document.getElementById('trade-table');
+      if (!trades || trades.length === 0) { box.innerHTML = '<div class="text-gray-400 text-sm">无成交记录</div>'; return; }
+      const rows = trades.map(t => {
+        const c = t.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400';
+        return `<tr class="border-t border-slate-700 text-sm">
+          <td class="p-2">${t.date}</td><td class="p-2 ${c} font-semibold">${t.side}</td>
+          <td class="p-2">${t.code}</td><td class="p-2 text-right">${t.qty}</td>
+          <td class="p-2 text-right">${t.price.toFixed(2)}</td><td class="p-2 text-xs text-gray-400">${t.reason||''}</td>
+        </tr>`;
+      }).join('');
+      box.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-gray-400">
+        <th class="p-2 text-left">日期</th><th class="p-2 text-left">方向</th><th class="p-2 text-left">代码</th>
+        <th class="p-2 text-right">数量</th><th class="p-2 text-right">价格</th><th class="p-2 text-left">理由</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderPool(stocks) {
+      const box = document.getElementById('pool-table');
+      if (!stocks || stocks.length === 0) { box.innerHTML = '<div class="text-gray-400 text-sm">无候选池</div>'; return; }
+      const rows = stocks.map((s, i) => `<tr class="border-t border-slate-700 text-sm">
+        <td class="p-2">${i+1}</td><td class="p-2">${s.code}</td>
+        <td class="p-2">${s.name||''}</td><td class="p-2">${s.industry||''}</td>
+      </tr>`).join('');
+      box.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-gray-400">
+        <th class="p-2 text-left">#</th><th class="p-2 text-left">代码</th>
+        <th class="p-2 text-left">名称</th><th class="p-2 text-left">行业</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    async function load() {
+      try {
+        const r = await fetch('/api/scoring');
+        const d = await r.json();
+        if (d.error) { document.getElementById('period').innerText = d.error; return; }
+        document.getElementById('period').innerText = `${d.start_date} ~ ${d.end_date}（${d.days}天 | 候选池${d.pool_size}只）`;
+        renderKPI(d.kpi, d.benchmark);
+        initEquity(d.equity_curve);
+        initDrawdown(d.drawdown);
+        renderTrades(d.trades);
+        renderPool(d.pool_stocks);
+      } catch (e) { document.getElementById('period').innerText = '加载失败：' + e.message; }
+    }
+    load();
+    window.addEventListener('resize', load);
+  </script>
+</body>
+</html>

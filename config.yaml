@@ -1,0 +1,87 @@
+# AlphaForge 运行配置
+# 路径中的反斜杠在 YAML 中需用双反斜杠 \\ 或改用正斜杠 /
+
+app:
+  name: AlphaForge
+  version: 1.0.0
+  log_level: INFO
+
+paths:
+  data_dir: ./data
+  output_dir: ./output
+  cache_db: ./data/cache.db
+  pit_db: ./data/pit.db
+  # 数据源目录：主流水线 模拟盘 Excel 所在文件夹
+  external_scorer_dir: "<企业内部路径已移除> 模拟盘数据[每日，组为单位，细分到人，excel，每日1sheet页]"
+  # Excel 文件名（与 external_scorer_dir 拼接得到完整路径）
+  # 也可直接用 external_scorer_file 指定完整路径
+  external_scorer_file: ""
+  sync_state_db: ./data/sync_state.db
+
+data:
+  base_year: 2026
+  filter_example_rows: true
+  use_numeric_summary_row: true
+
+market_rules:
+  stamp_tax_rate: 0.001
+  commission_rate: 0.00025
+  min_commission: 5.0
+  transfer_fee_rate: 0.00002
+  slippage_pct: 0.0005
+  slippage_fixed: 0.01
+  enable_t_plus_1: true
+  price_limit:
+    MAIN: 0.10
+    GEM: 0.20
+    STAR: 0.20
+    BEI: 0.30
+
+analysis:
+  risk_free_rate: 0.03
+  annualization_factor: 252
+  benchmark: "000300.SH"
+  max_drawdown_warning: -0.15
+  max_volatility_warning: 0.30
+  min_sharpe_ratio: 0.5
+  max_single_position: 0.25
+  max_industry_exposure: 0.25
+
+backtest:
+  initial_capital: 1000000
+  default_period_days: 60
+
+# 自动同步配置
+sync:
+  excel_filename: "投资流水记录表.xlsx"   # 与 external_scorer_dir 拼接
+  interval_seconds: 300                        # watch 模式检查间隔（秒）
+  auto_run_pipeline: true                      # 同步到新数据后自动跑回测+分析+报告
+  detect_by: "sheet"                           # "sheet" 增量检测 / "mtime" 文件修改时间
+
+optimizer:
+  method: "bayesian"
+  n_trials: 100
+  objective: "sharpe"
+  max_drawdown_constraint: 0.20
+
+robustness:
+  walk_forward_window: 30
+  monte_carlo_runs: 1000
+
+capital_constraints:
+  weekly_max: 250000
+  daily_max: 50000
+  cycle_days: 30
+
+report:
+  daily_enabled: true
+  weekly_enabled: true
+  backtest_enabled: true
+  output_format: ["txt", "json"]
+
+viz:
+  enabled: true
+  host: 127.0.0.1
+  port: 8050
+  debug: false
+  cdn: false

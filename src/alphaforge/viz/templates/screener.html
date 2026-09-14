@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaForge 选股回测系统</title>
+  <script src="/static/vendor/echarts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #0f172a; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+    .chart-box { width: 100%; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 8px 10px; text-align: left; font-size: 12px; }
+    th { color: #94a3b8; font-weight: 600; border-bottom: 1px solid #334155; position: sticky; top: 0; background: #1e293b; }
+    td { border-bottom: 1px solid #233449; }
+    tr:hover td { background: #233449; }
+    .tag-buy { background: rgba(52,211,153,0.2); color: #34d399; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .tag-sell { background: rgba(248,113,113,0.2); color: #f87171; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .tag-hold { background: rgba(96,165,250,0.2); color: #60a5fa; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .tag-watch { background: rgba(251,191,36,0.2); color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .score-bar { display: inline-block; height: 6px; border-radius: 3px; vertical-align: middle; }
+    .scroll-box { max-height: 480px; overflow-y: auto; }
+    .scroll-box::-webkit-scrollbar { width: 6px; }
+    .scroll-box::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  </style>
+</head>
+<body class="text-gray-100 p-6">
+  <div class="max-w-7xl mx-auto">
+    <!-- 顶栏 -->
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold">AlphaForge 选股回测系统</h1>
+        <p id="report-meta" class="text-gray-400 text-sm mt-1">加载中...</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="/" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm">组合仪表盘</a>
+        <a href="/backtest" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm">回测明细</a>
+        <a href="/attribution" class="bg-cyan-600 hover:bg-cyan-500 px-4 py-2 rounded-lg text-sm">归因分析</a>
+      </div>
+    </div>
+
+    <!-- 策略说明条 -->
+    <div class="card p-3 mb-4 text-xs text-gray-400">
+      <span class="text-cyan-400 font-semibold">评分体系</span>：基本面40（ROE/营收/FCF/估值/股息） + 技术面40（均线/尾盘/量能/换手/行业热度） + 资金面20（北向/主力）
+      <span class="mx-3 text-slate-600">|</span>
+      <span class="text-emerald-400 font-semibold">买入</span>：预过滤门槛 + 综合分≥65 + MA20站上（H5）
+      <span class="mx-3 text-slate-600">|</span>
+      <span class="text-rose-400 font-semibold">卖出</span>：止盈15-20% / 止损破MA20放量 / 行业破MA10
+      <span class="mx-3 text-slate-600">|</span>
+      <span class="text-purple-400 font-semibold">仓位</span>：凯利公式 10%-30%
+    </div>
+
+    <!-- KPI 卡片 -->
+    <div id="kpi-grid" class="grid grid-cols-2 md:grid-cols-5 xl:grid-cols-10 gap-3 mb-6"></div>
+
+    <!-- 权益曲线 + 回撤 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="card p-4 lg:col-span-2">
+        <h3 class="font-semibold mb-2">权益曲线</h3>
+        <div id="equity-chart" class="chart-box" style="height:340px"></div>
+      </div>
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">回撤水下</h3>
+        <div id="drawdown-chart" class="chart-box" style="height:340px"></div>
+      </div>
+    </div>
+
+    <!-- 评分明细 + 信号统计 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <!-- 最新日评分明细 -->
+      <div class="card p-4 lg:col-span-2">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-semibold">最新交易日评分明细（Top N）</h3>
+          <span id="latest-date" class="text-xs text-gray-400"></span>
+        </div>
+        <div class="scroll-box">
+          <table id="scores-table">
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>行业</th>
+                <th>综合分</th>
+                <th>基本面</th>
+                <th>技术面</th>
+                <th>资金面</th>
+                <th>MA20</th>
+                <th>预过滤</th>
+                <th>信号</th>
+                <th>凯利仓位</th>
+              </tr>
+            </thead>
+            <tbody id="scores-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 信号统计 + 行业分布 -->
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">买卖信号统计</h3>
+        <div id="signal-stats" class="grid grid-cols-2 gap-3 mb-4"></div>
+        <h3 class="font-semibold mb-2 mt-4">行业得分分布（最新日）</h3>
+        <div id="industry-chart" class="chart-box" style="height:240px"></div>
+      </div>
+    </div>
+
+    <!-- 买卖信号时间线 + 当前持仓 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">买卖信号时间线</h3>
+        <div class="scroll-box" style="max-height:400px">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>方向</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>价格</th>
+                <th>数量</th>
+                <th>理由</th>
+              </tr>
+            </thead>
+            <tbody id="signals-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">最新持仓</h3>
+        <div class="scroll-box" style="max-height:400px">
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>持仓量</th>
+                <th>成本</th>
+                <th>现价</th>
+                <th>浮盈%</th>
+              </tr>
+            </thead>
+            <tbody id="held-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 评分构成雷达 + 候选池 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">Top 5 评分雷达</h3>
+        <div id="radar-chart" class="chart-box" style="height:340px"></div>
+      </div>
+      <div class="card p-4 lg:col-span-2">
+        <h3 class="font-semibold mb-2">候选股票池</h3>
+        <div class="scroll-box" style="max-height:340px">
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                <th>行业</th>
+                <th>板块</th>
+                <th>质量因子</th>
+              </tr>
+            </thead>
+            <tbody id="universe-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <p class="text-gray-500 text-xs text-center mt-8">AlphaForge 选股回测系统 · 依据 stock-scoring_auto_workflow.md 实现 · 仅供研究复盘</p>
+  </div>
+
+  <script>
+    // ---------- 工具 ----------
+    function fmtPct(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+    function colorOf(v) { return v >= 0 ? '#34d399' : '#f87171'; }
+    function fmtNum(v, n=2) { return (v || 0).toFixed(n); }
+
+    // ---------- KPI 渲染 ----------
+    function renderKPI(kpi) {
+      const cards = [
+        { label: '累计收益', value: fmtPct(kpi.total_return), color: colorOf(kpi.total_return) },
+        { label: '年化收益', value: fmtPct(kpi.annualized), color: colorOf(kpi.annualized) },
+        { label: '最大回撤', value: fmtPct(kpi.max_drawdown), color: colorOf(kpi.max_drawdown) },
+        { label: '夏普比率', value: fmtNum(kpi.sharpe), color: kpi.sharpe >= 0.5 ? '#34d399' : '#fbbf24' },
+        { label: '胜率', value: fmtNum(kpi.win_rate, 1) + '%', color: '#60a5fa' },
+        { label: '成交笔数', value: kpi.total_trades, color: '#c084fc' },
+        { label: 'Calmar', value: fmtNum(kpi.calmar), color: '#fbbf24' },
+        { label: 'Sortino', value: fmtNum(kpi.sortino), color: '#a78bfa' },
+        { label: '期末净值', value: '¥' + (kpi.final_nav/10000).toFixed(1) + '万', color: '#22d3ee' },
+        { label: '初始资金', value: '¥' + (kpi.initial_capital/10000).toFixed(0) + '万', color: '#94a3b8' },
+      ];
+      document.getElementById('kpi-grid').innerHTML = cards.map(c => `
+        <div class="card p-3">
+          <div class="text-gray-400 text-xs">${c.label}</div>
+          <div class="text-xl font-bold mt-1" style="color:${c.color}">${c.value}</div>
+        </div>`).join('');
+    }
+
+    // ---------- 权益曲线 ----------
+    function initEquity(equity) {
+      const chart = echarts.init(document.getElementById('equity-chart'), 'dark');
+      const labels = equity.dates;
+      const nav = equity.nav.map(v => Math.round(v));
+      const first = nav[0] || 1000000;
+      const normalized = nav.map(v => +(v/first*1000).toFixed(1));
+      chart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 60, right: 20, top: 20, bottom: 40 },
+        xAxis: { type: 'category', data: labels, axisLine: { lineStyle: { color: '#475569' } } },
+        yAxis: { type: 'value', axisLabel: { formatter: v => (v/10).toFixed(1) }, splitLine: { lineStyle: { color: '#1e293b' } } },
+        series: [{
+          name: '组合净值', type: 'line', data: normalized, smooth: true,
+          symbol: 'none', lineStyle: { width: 3, color: '#22d3ee' },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(34,211,238,0.3)'},{offset:1,color:'rgba(34,211,238,0)'}]) }
+        }]
+      });
+    }
+
+    function initDrawdown(dd) {
+      const chart = echarts.init(document.getElementById('drawdown-chart'), 'dark');
+      chart.setOption({
+        tooltip: { trigger: 'axis', valueFormatter: v => v.toFixed(2) + '%' },
+        grid: { left: 50, right: 20, top: 20, bottom: 40 },
+        xAxis: { type: 'category', data: dd.dates, axisLine: { lineStyle: { color: '#475569' } } },
+        yAxis: { type: 'value', axisLabel: { formatter: v => v + '%' }, splitLine: { lineStyle: { color: '#1e293b' } } },
+        series: [{ name: '回撤', type: 'line', data: dd.values, smooth: true, symbol: 'none',
+          lineStyle: { color: '#f87171' },
+          areaStyle: { color: 'rgba(248,113,113,0.4)' } }]
+      });
+    }
+
+    // ---------- 评分明细表 ----------
+    function renderScores(scores) {
+      const tbody = document.getElementById('scores-tbody');
+      if (!scores || scores.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-gray-500 py-4">暂无评分数据</td></tr>';
+        return;
+      }
+      tbody.innerHTML = scores.map((s, i) => {
+        const ma20Tag = s.ma20_above
+          ? '<span class="tag-buy">站上</span>'
+          : '<span class="tag-sell">跌破</span>';
+        const pfTag = s.prefilters_passed
+          ? '<span class="tag-buy">通过</span>'
+          : '<span class="tag-watch">未通过</span>';
+        let signalTag = '<span class="tag-hold">观察</span>';
+        if (s.buy_signal) signalTag = '<span class="tag-buy">买入</span>';
+        else if (s.sell_signal) signalTag = '<span class="tag-sell">卖出</span>';
+        const totalColor = s.total >= 65 ? '#34d399' : (s.total >= 50 ? '#fbbf24' : '#f87171');
+        const kellyPct = (s.kelly_ratio * 100).toFixed(1) + '%';
+        return `<tr>
+          <td class="text-gray-400">${i+1}</td>
+          <td class="font-mono">${s.code}</td>
+          <td>${s.name}</td>
+          <td class="text-cyan-300">${s.industry}</td>
+          <td><span class="font-bold" style="color:${totalColor}">${s.total.toFixed(1)}</span>
+              <span class="score-bar" style="width:${s.total*0.8}px;background:${totalColor};margin-left:4px"></span></td>
+          <td><span style="color:${s.fundamental.total>=24?'#34d399':'#fbbf24'}">${s.fundamental.total.toFixed(1)}</span><span class="text-gray-500">/40</span></td>
+          <td><span style="color:${s.technical.total>=28?'#34d399':'#fbbf24'}">${s.technical.total.toFixed(1)}</span><span class="text-gray-500">/40</span></td>
+          <td><span style="color:${s.capital.total>=12?'#34d399':'#fbbf24'}">${s.capital.total.toFixed(1)}</span><span class="text-gray-500">/20</span></td>
+          <td>${ma20Tag}</td>
+          <td>${pfTag}</td>
+          <td>${signalTag}</td>
+          <td class="text-purple-300">${kellyPct}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---------- 信号统计 ----------
+    function renderSignalStats(stats) {
+      const box = document.getElementById('signal-stats');
+      box.innerHTML = `
+        <div class="p-3 rounded-lg bg-emerald-500/10 border border-emerald-600">
+          <div class="text-emerald-300 text-xs">买入信号</div>
+          <div class="text-2xl font-bold text-emerald-400 mt-1">${stats.buy}</div>
+        </div>
+        <div class="p-3 rounded-lg bg-rose-500/10 border border-rose-600">
+          <div class="text-rose-300 text-xs">卖出信号</div>
+          <div class="text-2xl font-bold text-rose-400 mt-1">${stats.sell}</div>
+        </div>`;
+    }
+
+    // ---------- 行业分布 ----------
+    function initIndustry(dist) {
+      const chart = echarts.init(document.getElementById('industry-chart'), 'dark');
+      chart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 40, right: 20, top: 20, bottom: 40 },
+        xAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } } },
+        yAxis: { type: 'category', data: dist.map(d => d.industry), axisLine: { lineStyle: { color: '#475569' } } },
+        series: [{
+          type: 'bar',
+          data: dist.map(d => d.avg_score),
+          barWidth: 16,
+          itemStyle: { color: '#a78bfa', borderRadius: 4 },
+          label: { show: true, position: 'right', formatter: '{c}', color: '#94a3b8', fontSize: 10 }
+        }]
+      });
+    }
+
+    // ---------- 信号时间线 ----------
+    function renderSignals(signals) {
+      const tbody = document.getElementById('signals-tbody');
+      if (!signals || signals.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-500 py-4">暂无信号</td></tr>';
+        return;
+      }
+      // 倒序展示（最新在上）
+      const sorted = [...signals].reverse();
+      tbody.innerHTML = sorted.map(s => {
+        const tag = s.side === 'BUY' ? '<span class="tag-buy">买入</span>' : '<span class="tag-sell">卖出</span>';
+        return `<tr>
+          <td class="text-gray-400">${(s.date||'').slice(0,10)}</td>
+          <td>${tag}</td>
+          <td class="font-mono">${s.code}</td>
+          <td>${s.name||''}</td>
+          <td>${(s.price||0).toFixed(2)}</td>
+          <td>${s.qty||0}</td>
+          <td class="text-gray-400">${s.reason||''}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---------- 最新持仓 ----------
+    function renderHeld(held) {
+      const tbody = document.getElementById('held-tbody');
+      if (!held || held.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-500 py-4">空仓</td></tr>';
+        return;
+      }
+      tbody.innerHTML = held.map(h => {
+        const pnl = (h.unrealized_pnl_pct || 0) * 100;
+        const color = pnl >= 0 ? '#34d399' : '#f87171';
+        return `<tr>
+          <td class="font-mono">${h.code}</td>
+          <td>${h.name||h.code}</td>
+          <td>${h.qty}</td>
+          <td>${(h.avg_cost||0).toFixed(2)}</td>
+          <td>${(h.current_price||0).toFixed(2)}</td>
+          <td style="color:${color}">${pnl>=0?'+':''}${pnl.toFixed(2)}%</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---------- Top 5 雷达 ----------
+    function initRadar(scores) {
+      const chart = echarts.init(document.getElementById('radar-chart'), 'dark');
+      const top5 = (scores || []).slice(0, 5);
+      chart.setOption({
+        tooltip: { trigger: 'item' },
+        legend: { bottom: 0, textStyle: { color: '#94a3b8', fontSize: 11 } },
+        radar: {
+          indicator: [
+            { name: 'ROE', max: 10 },
+            { name: '营收', max: 10 },
+            { name: 'FCF', max: 8 },
+            { name: '估值', max: 7 },
+            { name: '股息', max: 5 },
+            { name: '均线', max: 12 },
+            { name: '尾盘', max: 8 },
+            { name: '量能', max: 8 },
+            { name: '换手', max: 6 },
+            { name: '行业热度', max: 6 },
+            { name: '北向', max: 10 },
+            { name: '主力', max: 10 },
+          ],
+          splitLine: { lineStyle: { color: '#334155' } },
+          splitArea: { areaStyle: { color: ['rgba(30,41,59,0.3)', 'rgba(30,41,59,0.1)'] } },
+          axisLine: { lineStyle: { color: '#334155' } },
+        },
+        series: [{
+          type: 'radar',
+          data: top5.map(s => ({
+            name: s.name || s.code,
+            value: [
+              s.fundamental.roe, s.fundamental.rev_growth, s.fundamental.free_cash_flow,
+              s.fundamental.valuation, s.fundamental.dividend,
+              s.technical.ma_alignment, s.technical.tail_rally, s.technical.volume_trend,
+              s.technical.turnover, s.technical.industry_heat,
+              s.capital.northbound, s.capital.main_force,
+            ],
+            areaStyle: { opacity: 0.1 },
+          })),
+        }],
+      });
+    }
+
+    // ---------- 候选池 ----------
+    function renderUniverse(universe) {
+      const tbody = document.getElementById('universe-tbody');
+      if (!universe || universe.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-500 py-4">无</td></tr>';
+        return;
+      }
+      tbody.innerHTML = universe.map(u => {
+        const qColor = u.quality >= 0.7 ? '#34d399' : (u.quality >= 0.4 ? '#fbbf24' : '#f87171');
+        return `<tr>
+          <td class="font-mono">${u.code}</td>
+          <td>${u.name}</td>
+          <td class="text-cyan-300">${u.industry}</td>
+          <td>${u.board}</td>
+          <td><span style="color:${qColor}">${u.quality.toFixed(2)}</span></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---------- 加载 ----------
+    async function loadScreener() {
+      try {
+        const resp = await fetch('/api/screener');
+        const data = await resp.json();
+        if (data.error) {
+          document.getElementById('report-meta').innerText = data.error;
+          return;
+        }
+        // 元信息
+        const cfg = data.strategy_config || {};
+        document.getElementById('report-meta').innerText =
+          `候选池 ${cfg.universe_size || 0} 只 · 覆盖 ${(cfg.industries||[]).length} 个行业 · ` +
+          `回测 ${cfg.trading_days || 0} 日 · 最大持仓 ${cfg.max_positions || 0} 只`;
+        document.getElementById('latest-date').innerText =
+          data.score_history_dates && data.score_history_dates.length
+            ? '日期：' + data.score_history_dates[data.score_history_dates.length-1] : '';
+
+        renderKPI(data.kpi);
+        initEquity(data.equity_curve);
+        initDrawdown(data.drawdown);
+        renderScores(data.latest_scores);
+        renderSignalStats(data.signal_stats);
+        initIndustry(data.industry_distribution);
+        renderSignals(data.signals);
+        renderHeld(data.latest_held);
+        initRadar(data.latest_scores);
+        renderUniverse(data.universe);
+      } catch (e) {
+        document.getElementById('report-meta').innerText = '加载失败：' + e.message;
+      }
+    }
+
+    loadScreener();
+    // resize
+    let _resizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (_resizeTimer) clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(() => {
+        document.querySelectorAll('[id$="-chart"]').forEach(el => {
+          const inst = echarts.getInstanceByDom(el);
+          if (inst) inst.resize();
+        });
+      }, 200);
+    });
+  </script>
+</body>
+</html>
