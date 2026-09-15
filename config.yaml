@@ -11,8 +11,9 @@ paths:
   output_dir: ./output
   cache_db: ./data/cache.db
   pit_db: ./data/pit.db
-  # 数据源目录：主流水线 模拟盘 Excel 所在文件夹
-  external_scorer_dir: "<企业内部路径已移除> 模拟盘数据[每日，组为单位，细分到人，excel，每日1sheet页]"
+  # 数据源目录：存放外部打分系统导出的交易记录 Excel 的文件夹
+  # 公开版留空，请填写你自己的数据目录（也可改用 external_scorer_file 直接指定文件）
+  external_scorer_dir: ""
   # Excel 文件名（与 external_scorer_dir 拼接得到完整路径）
   # 也可直接用 external_scorer_file 指定完整路径
   external_scorer_file: ""
